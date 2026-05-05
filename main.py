@@ -29,8 +29,8 @@ from uopenai import OpenAI
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-WIFI_SSID     = "Y/OURSPACE"
-WIFI_PASSWORD = "qc123456789"
+WIFI_SSID     = "CU_kM7v"
+WIFI_PASSWORD = "a7tmyakw"
 
 ASR_APPID  = "b1f37776"
 ASR_KEY    = "9a60e825762db08d941b4f1b21cb988e"
@@ -109,6 +109,18 @@ _STATE_LABEL = {
     _SPEAKING:  "Speaking...",
     _ERROR:     "Error",
 }
+
+# ── Animation motion tables (y/x pixel offsets, applied via align) ────────────
+# Idle: slow gentle vertical bob (~1.7 s / cycle at 120 ms/step)
+_BOB_IDLE   = [0, 1, 2, 3, 4, 5, 4, 3, 2, 1, 0, -1, -2, -1]
+# Listen: excited bounce (~1 s / cycle at 80 ms/step)
+_BOB_LISTEN = [0, 3, 6, 9, 10, 9, 6, 3, 0, -2, -4, -2]
+# Think: slow left-right sway (x offset, ~4 s / cycle at 350 ms/step)
+_SWAY_THINK = [0, 1, 2, 3, 2, 1, 0, -1, -2, -3, -2, -1]
+# Error: nervous small tremble (x offset, ~1.2 s / cycle at 150 ms/step)
+_TREMBLE    = [-2, 0, 2, 0, -2, 0, 2, 0]
+
+_CHICK_BASE_Y = const(-20)   # base vertical offset from screen center
 
 # ── Display + touch init ──────────────────────────────────────────────────────
 # NOTE: framebuffers must be allocated BEFORE ST7789 init
@@ -267,6 +279,9 @@ async def animation_loop():
     _blink_t  = 0
     _think_fi = 0
     _speak_fi = 0
+    _bob_i    = 0
+    _sway_i   = 0
+    _trem_i   = 0
     while True:
         s = _anim_state
         if not _HAS_IMG or not _chick:
@@ -275,34 +290,44 @@ async def animation_loop():
 
         if s == _IDLE:
             _blink_t += 1
+            _bob_i = (_bob_i + 1) % len(_BOB_IDLE)
+            _chick.align(lv.ALIGN.CENTER, 0, _CHICK_BASE_Y + _BOB_IDLE[_bob_i])
             if _blink_t >= 28:
                 _chick.set_src(_frames['idle'][1])
-                await asyncio.sleep_ms(120)
+                await asyncio.sleep_ms(110)
                 _chick.set_src(_frames['idle'][0])
                 _blink_t = 0
-            await asyncio.sleep_ms(100)
+            await asyncio.sleep_ms(120)
 
         elif s == _LISTENING:
-            fi = (time.ticks_ms() // 350) & 1
+            fi = (time.ticks_ms() // 300) & 1
             _chick.set_src(_frames['listen'][fi])
-            await asyncio.sleep_ms(100)
+            _bob_i = (_bob_i + 1) % len(_BOB_LISTEN)
+            _chick.align(lv.ALIGN.CENTER, 0, _CHICK_BASE_Y + _BOB_LISTEN[_bob_i])
+            await asyncio.sleep_ms(80)
 
         elif s == _THINKING:
             if _frames['think']:
                 _think_fi = (_think_fi + 1) % len(_frames['think'])
                 _chick.set_src(_frames['think'][_think_fi])
-            await asyncio.sleep_ms(400)
+            _sway_i = (_sway_i + 1) % len(_SWAY_THINK)
+            _chick.align(lv.ALIGN.CENTER, _SWAY_THINK[_sway_i], _CHICK_BASE_Y)
+            await asyncio.sleep_ms(350)
 
         elif s == _SPEAKING:
             _speak_fi ^= 1
             if _frames['speak']:
                 _chick.set_src(_frames['speak'][_speak_fi])
-            await asyncio.sleep_ms(220)
+            _bob_i = (_bob_i + 1) % len(_BOB_IDLE)
+            _chick.align(lv.ALIGN.CENTER, 0, _CHICK_BASE_Y + _BOB_IDLE[_bob_i])
+            await asyncio.sleep_ms(210)
 
         elif s == _ERROR:
             if _frames['error']:
                 _chick.set_src(_frames['error'][0])
-            await asyncio.sleep_ms(500)
+            _trem_i = (_trem_i + 1) % len(_TREMBLE)
+            _chick.align(lv.ALIGN.CENTER, _TREMBLE[_trem_i], _CHICK_BASE_Y)
+            await asyncio.sleep_ms(150)
 
         else:
             await asyncio.sleep_ms(100)
