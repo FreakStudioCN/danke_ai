@@ -26,11 +26,13 @@ from async_mic_recorder import AsyncMicRecorder
 from xfyun_asr import XfyunASR
 from xfyun_tts import XfyunTTS
 from uopenai import OpenAI
+from memory import MemoryStore
+from personality import Personality
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-WIFI_SSID     = "CU_kM7v"
-WIFI_PASSWORD = "a7tmyakw"
+WIFI_SSID     = "ZGCEC-VIP"
+WIFI_PASSWORD = "67899876"
 
 ASR_APPID  = "b1f37776"
 ASR_KEY    = "9a60e825762db08d941b4f1b21cb988e"
@@ -56,6 +58,15 @@ THINKING_PHRASES = [
     "好哒，蛋壳在想了，脑袋瓜有点小，请稍等一秒秒",
 ]
 THINKING_PCMS = ["thinking_{}.pcm".format(i) for i in range(len(THINKING_PHRASES))]
+
+TOUCH_PHRASES = [
+    "\u54ce\u5440\uff5e\u4e3b\u4eba\u6478\u86cb\u58f3\u554a\uff0c\u597d\u5f00\u5fc3\u5440\uff01",
+    "\u55ef\u55ef\uff01\u86cb\u58f3\u6700\u559c\u6b22\u4e3b\u4eba\u4e86\uff01",
+    "\u563f\u563f\uff5e\u4e3b\u4eba\u6765\u966a\u86cb\u58f3\u554a\uff01",
+    "\u554a\uff01\u88ab\u6478\u5230\u4e86\uff0c\u86cb\u58f3\u5fc3\u8df3\u597d\u5feb\uff01",
+    "\u4e3b\u4eba\u4e3b\u4eba\uff5e\u86cb\u58f3\u5728\u8fd9\u91cc\u5462\uff01",
+]
+TOUCH_PCMS = ["touch_{}.pcm".format(i) for i in range(len(TOUCH_PHRASES))]
 
 # ── Display constants ─────────────────────────────────────────────────────────
 
@@ -91,6 +102,7 @@ _LISTENING = 1
 _THINKING  = 2
 _SPEAKING  = 3
 _ERROR     = 4
+_TOUCH     = 5
 
 # Per-state solid background color (vivid, no gradient to avoid GC issues)
 _STATE_BG = {
@@ -99,6 +111,7 @@ _STATE_BG = {
     _THINKING:  0xffa726,   # orange
     _SPEAKING:  0xab47bc,   # purple
     _ERROR:     0xef5350,   # red
+    _TOUCH:     0xff69b4,   # pink
 }
 _STATE_COLOR = _STATE_BG  # dot fallback
 
@@ -108,7 +121,19 @@ _STATE_LABEL = {
     _THINKING:  "Thinking...",
     _SPEAKING:  "Speaking...",
     _ERROR:     "Error",
+    _TOUCH:     "Touch~",
 }
+
+_touch_flag = False   # LVGL callback → touch_loop signal
+_touch_mood = False   # touch_loop → next LLM round hint
+
+def _on_chick_touch(event):
+    global _touch_flag
+    print("[Touch] callback fired, state={}".format(_anim_state))
+    # 只在 IDLE 和 LISTENING 状态响应触摸
+    if _anim_state in (_IDLE, _LISTENING):
+        _touch_flag = True
+        print("[Touch] flag set")
 
 # ── Animation motion tables (y/x pixel offsets, applied via align) ────────────
 # Idle: slow gentle vertical bob (~1.7 s / cycle at 120 ms/step)
@@ -223,6 +248,8 @@ if _HAS_IMG and _frames['idle']:
     _chick = lv.image(scrn)
     _chick.set_src(_frames['idle'][0])
     _chick.align(lv.ALIGN.CENTER, 0, -20)
+    _chick.add_flag(lv.obj.FLAG.CLICKABLE)
+    _chick.add_event_cb(_on_chick_touch, lv.EVENT.CLICKED, None)
     _dot = None
     print("[UI] chick image widget created")
 else:
@@ -241,6 +268,12 @@ status_label.set_text("Starting...")
 status_label.set_style_text_color(lv.color_hex(0xffffff), lv.PART.MAIN)
 status_label.set_style_text_font(lv.font_montserrat_16, lv.PART.MAIN)
 status_label.align(lv.ALIGN.BOTTOM_MID, 0, -50)
+
+_heart_label = lv.label(scrn)
+_heart_label.set_text("-----")
+_heart_label.set_style_text_color(lv.color_hex(0xffffff), lv.PART.MAIN)
+_heart_label.set_style_text_font(lv.font_montserrat_16, lv.PART.MAIN)
+_heart_label.align(lv.ALIGN.TOP_RIGHT, -8, 8)
 
 # Sound bars (visible only in LISTENING state)
 _BAR_N   = 5
@@ -271,6 +304,7 @@ def set_state(state):
     _anim_state = state
     gc.collect()
     status_label.set_text(_STATE_LABEL[state])
+    scrn.set_style_bg_color(lv.color_hex(_STATE_BG[state]), lv.PART.MAIN)
     if not _HAS_IMG and _dot:
         _dot.set_style_bg_color(lv.color_hex(_STATE_COLOR[state]), lv.PART.MAIN)
 
@@ -329,6 +363,14 @@ async def animation_loop():
             _chick.align(lv.ALIGN.CENTER, _TREMBLE[_trem_i], _CHICK_BASE_Y)
             await asyncio.sleep_ms(150)
 
+        elif s == _TOUCH:
+            fi = (time.ticks_ms() // 200) & 1
+            if _frames['listen']:
+                _chick.set_src(_frames['listen'][fi])
+            _bob_i = (_bob_i + 1) % len(_BOB_LISTEN)
+            _chick.align(lv.ALIGN.CENTER, 0, _CHICK_BASE_Y + _BOB_LISTEN[_bob_i])
+            await asyncio.sleep_ms(80)
+
         else:
             await asyncio.sleep_ms(100)
 
@@ -345,6 +387,77 @@ async def bars_loop():
             for bar in _bars:
                 bar.set_style_opa(lv.OPA.TRANSP, lv.PART.MAIN)
         await asyncio.sleep_ms(120)
+
+
+def _update_heart(closeness):
+    filled = min(closeness, 5)
+    _heart_label.set_text("*" * filled + "-" * (5 - filled))
+
+
+_EMOTION_MAP = {
+    "happy":   ["\u5f00\u5fc3", "\u597d\u5f00\u5fc3", "\u54c8\u54c8", "\u6211\u7231", "\u597d\u559c\u6b22", "\u5c0f\u5e78\u798f"],
+    "sad":     ["\u96be\u8fc7", "\u54ed", "\u4f24\u5fc3", "\u4e0d\u5f00\u5fc3", "\u60b2", "\u53ef\u601c"],
+    "tired":   ["\u7d2f\u4e86", "\u8fdf\u4e86", "\u597d\u7d2f", "\u529e\u4e0d\u52a8", "\u6ca1\u529b\u6c14"],
+    "angry":   ["\u751f\u6c14", "\u81ea\u6211", "\u60af\u5fc3", "\u6c14\u6b7b\u4e86", "\u5c82\u6709\u6b64\u7406"],
+    "anxious": ["\u7126\u8651", "\u538b\u529b", "\u4e0d\u5b89", "\u7d27\u5f20", "\u6015"],
+}
+
+def _detect_emotion(text):
+    for emotion, keywords in _EMOTION_MAP.items():
+        for kw in keywords:
+            if kw in text:
+                return emotion
+    return "neutral"
+
+
+async def touch_loop(memory, personality):
+    global _touch_flag, _touch_mood
+    print("[Touch] loop started")
+    while True:
+        await asyncio.sleep_ms(50)
+        if not _touch_flag:
+            continue
+        _touch_flag = False
+
+        # 如果正在录音，先回到 IDLE 让录音自然中断
+        if _anim_state == _LISTENING:
+            print("[Touch] interrupt listening, back to IDLE")
+            set_state(_IDLE)
+            await asyncio.sleep_ms(500)  # 给录音循环时间退出
+
+        print("[Touch] detected! closeness before:", memory.closeness)
+        try:
+            memory.add_touch()
+            _update_heart(memory.closeness)
+            _touch_mood = True
+            set_state(_TOUCH)
+            pcm = TOUCH_PCMS[urandom.randint(0, len(TOUCH_PCMS) - 1)]
+            print("[Touch] playing:", pcm)
+            amp_sd.value(1)
+            with open(pcm, "rb") as _f:
+                while True:
+                    _chunk = _f.read(2048)
+                    if not _chunk:
+                        break
+                    audio_out.write(_chunk)
+            await asyncio.sleep_ms(40000 * 1000 // (16000 * 2) + 200)
+            amp_sd.value(0)
+            await asyncio.sleep_ms(300)
+            set_state(_IDLE)
+            print("[Touch] done, closeness now:", memory.closeness)
+        except Exception as e:
+            print("[Touch] error:", e)
+            set_state(_IDLE)
+
+
+async def _post_round_update(user_text, reply_text, memory, personality):
+    emotion = _detect_emotion(user_text + reply_text)
+    memory.add_episode(user_text, emotion)
+    personality.react_to_emotion(emotion)
+    _update_heart(memory.closeness)
+    if memory.total_rounds % 3 == 0:
+        memory.save()
+        personality.save()
 
 
 # ── LVGL task handler — integrates with asyncio event loop ───────────────────
@@ -445,6 +558,13 @@ async def chat_loop():
     asyncio.create_task(animation_loop())
     asyncio.create_task(bars_loop())
 
+    # Init memory and personality
+    memory      = MemoryStore()
+    personality = Personality()
+    _update_heart(memory.closeness)
+
+    asyncio.create_task(touch_loop(memory, personality))
+
     # Pre-synthesize thinking prompts
     print("[Danke] pre-synthesizing thinking prompts...")
     status_label.set_text("Preparing...")
@@ -455,16 +575,25 @@ async def chat_loop():
         except OSError:
             await tts.synthesize(phrase, fname)
 
+    # Pre-synthesize touch reaction prompts
+    for i, phrase in enumerate(TOUCH_PHRASES):
+        fname = TOUCH_PCMS[i]
+        try:
+            os.stat(fname)
+        except OSError:
+            await tts.synthesize(phrase, fname)
+
     print("[Danke] warming up mic...")
     status_label.set_text("Warming up...")
     await recorder.start()
 
-    # Greeting
+    # Greeting (context-aware)
+    greeting_text = memory.greeting()
     set_state(_SPEAKING)
-    await tts.synthesize_and_play("你好，我是蛋壳，有什么可以帮你的？", audio_out, amp_sd)
+    await tts.synthesize_and_play(greeting_text, audio_out, amp_sd)
     print("[Danke] ready")
 
-    messages = [{"role": "system", "content": LLM_SYSTEM}]
+    messages  = [{"role": "system", "content": personality.build_prompt(memory.build_context())}]
     round_num = 0
 
     while True:
@@ -475,7 +604,28 @@ async def chat_loop():
             # 1. Listen
             set_state(_LISTENING)
             t0 = time.ticks_us()
-            await recorder.listen(MIC_PCM)
+
+            # 创建录音任务，允许被触摸中断
+            listen_task = asyncio.create_task(recorder.listen(MIC_PCM))
+
+            # 轮询等待：录音完成 或 状态变为非 LISTENING（被触摸中断）
+            interrupted = False
+            while not listen_task.done():
+                if _anim_state != _LISTENING:
+                    # 被触摸中断，取消录音任务
+                    listen_task.cancel()
+                    print("[Danke] listen interrupted by touch")
+                    round_num -= 1
+                    interrupted = True
+                    await asyncio.sleep_ms(100)
+                    break
+                await asyncio.sleep_ms(50)
+
+            if interrupted:
+                continue  # 跳过本轮，直接进入下一轮
+
+            # 录音正常完成
+            await listen_task
             print("[Danke] listen {}ms".format(time.ticks_diff(time.ticks_us(), t0) // 1000))
 
             # 2. Play thinking prompt while ASR runs
@@ -497,6 +647,12 @@ async def chat_loop():
             # 4. LLM stream + sentence-level TTS
             messages.append({"role": "user", "content": text})
             messages = trim_history(messages)
+
+            # Rebuild dynamic system prompt each round
+            global _touch_mood
+            extra_hint = "\u4e3b\u4eba\u521f\u521f\u6478\u4e86\u86cb\u58f3\uff0c\u86cb\u58f3\u8fd8\u6ca1\u5e73\u9759\u5462\uff0c\u56de\u590d\u65f6\u8981\u8868\u73b0\u5f97\u66f4\u52a0\u5ba0\u6ba1\u548c\u5f00\u5fc3" if _touch_mood else ""
+            _touch_mood = False
+            messages[0] = {"role": "system", "content": personality.build_prompt(memory.build_context(), extra_hint)}
 
             t0 = time.ticks_us()
             resp = await llm.chat.completions.create(
@@ -542,6 +698,7 @@ async def chat_loop():
                 await tts.synthesize_and_play(sentence_buf, audio_out, amp_sd)
 
             messages.append({"role": "assistant", "content": full_reply})
+            asyncio.create_task(_post_round_update(text, full_reply, memory, personality))
             print("[Danke] round done {}ms".format(time.ticks_diff(time.ticks_us(), t0) // 1000))
 
         except Exception as e:
