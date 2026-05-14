@@ -31,8 +31,8 @@ from personality import Personality
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-WIFI_SSID     = "ZGCEC-VIP"
-WIFI_PASSWORD = "67899876"
+WIFI_SSID = "CU_kM7v"
+WIFI_PASSWORD= "a7tmyakw"
 
 ASR_APPID  = "b1f37776"
 ASR_KEY    = "9a60e825762db08d941b4f1b21cb988e"
