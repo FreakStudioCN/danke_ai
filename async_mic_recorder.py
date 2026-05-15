@@ -82,7 +82,7 @@ class AsyncMicRecorder:
                  i2s,
                  rate: int = 16000,
                  threshold: int = 600,
-                 silence_frames: int = 40,
+                 silence_frames: int = 15,
                  min_voice_frames: int = 5,
                  frame_bytes: int = 2048,
                  max_seconds: int = 30,

@@ -24,7 +24,11 @@ import os
 
 from async_mic_recorder import AsyncMicRecorder
 from xfyun_asr import XfyunASR
-from xfyun_tts import XfyunTTS
+TTS_BACKEND = "xfyun"  # "xfyun" or "volcengine"
+if TTS_BACKEND == "volcengine":
+    from volcengine_tts_v1_ws import VolcengineTTSV1WS
+else:
+    from xfyun_tts import XfyunTTS
 from uopenai import OpenAI
 from memory import MemoryStore
 from personality import Personality
@@ -41,6 +45,11 @@ ASR_SECRET = "OGE1ZjJlYTdhNzFlMmYzYmMxYTMyMTk3"
 TTS_APPID  = "85ca87b7"
 TTS_KEY    = "a64add4b50e1df51f2b31ed8ba086722"
 TTS_SECRET = "YWE2Y2MwYWEzZGQ1OGM4Yjg2NDkxYTFm"
+
+VOLC_APPID       = "5314645736"
+VOLC_TOKEN       = "zwYWsUt4CGk5Cvp-2FYAFBl3X-Fh1Wmg"
+VOLC_VOICE_TYPE  = "BV701_streaming"
+VOLC_VOLUME      = 0.5
 
 LLM_KEY    = "7e549988-07d8-40b7-b6d4-09e4e7c04656"
 LLM_URL    = "https://ark.cn-beijing.volces.com/api/v3"
@@ -523,7 +532,10 @@ recorder = AsyncMicRecorder(
     max_seconds=30, warmup_frames=15,
 )
 asr = XfyunASR(ASR_APPID, ASR_KEY, ASR_SECRET, sample_rate=16000)
-tts = XfyunTTS(TTS_APPID, TTS_KEY, TTS_SECRET, auf="audio/L16;rate=16000")
+if TTS_BACKEND == "volcengine":
+    tts = VolcengineTTSV1WS(VOLC_APPID, VOLC_TOKEN, voice_type=VOLC_VOICE_TYPE, sample_rate=16000, volume=VOLC_VOLUME)
+else:
+    tts = XfyunTTS(TTS_APPID, TTS_KEY, TTS_SECRET, auf="audio/L16;rate=16000")
 llm = OpenAI(api_key=LLM_KEY, base_url=LLM_URL)
 print("[Drivers] ready")
 
